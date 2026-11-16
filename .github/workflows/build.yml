@@ -1,0 +1,67 @@
+name: Build BoonOutput.dll
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:   # lets you press "Run workflow" manually
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+
+      # The Nexus header and a matching Dear ImGui come from an official Raidcore addon,
+      # because Nexus shares its ImGui context with addons and the versions should match.
+      - name: Fetch Nexus.h and ImGui from an official Raidcore addon
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/RaidcoreGG/MouseLookHandler deps
+          echo "Dependency commit (note this down if you want to pin it later):"
+          git -C deps rev-parse HEAD
+          for f in src/nexus/Nexus.h src/imgui/imgui.h src/imgui/imgui.cpp src/imgui/imgui_draw.cpp src/imgui/imgui_tables.cpp src/imgui/imgui_widgets.cpp; do
+            if [ ! -f "deps/$f" ]; then
+              echo "::error::deps/$f is missing - the layout of the dependency repo changed. Paste this log into the chat."
+              exit 1
+            fi
+          done
+          grep -n "NEXUS_API_VERSION" deps/src/nexus/Nexus.h | head -5 || true
+
+      - name: Set up the MSVC compiler
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Run the tracker unit tests
+        shell: cmd
+        run: |
+          mkdir build
+          cl /nologo /std:c++17 /EHsc /I src test\test_tracker.cpp /Fo:build\ /Fe:build\test_tracker.exe
+          build\test_tracker.exe
+
+      - name: Build BoonOutput.dll
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /O2 /EHsc /MT /utf-8 /LD /I src /I deps\src ^
+            src\main.cpp ^
+            deps\src\imgui\imgui.cpp ^
+            deps\src\imgui\imgui_draw.cpp ^
+            deps\src\imgui\imgui_tables.cpp ^
+            deps\src\imgui\imgui_widgets.cpp ^
+            /Fo:build\ /Fe:BoonOutput.dll
+
+      - name: Check that the DLL exports GetAddonDef
+        shell: cmd
+        run: |
+          dumpbin /exports BoonOutput.dll | findstr /C:"GetAddonDef"
+
+      - name: Upload the DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoonOutput
+          path: BoonOutput.dll
+          if-no-files-found: error
